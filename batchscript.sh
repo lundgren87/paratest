@@ -9,11 +9,20 @@ echo SETTING UP ENVIRONMENT
 cd ${HOME}/git/paratest/
 echo ENVIRONMENT SET UP
 
-echo BUILDING EXAMPLE
-make clean
-make
-echo BUILD FINISHED
+if [ "$1" = "make" ] ; then
+    echo BUILDING EXAMPLE
+    make clean
+    make
+    echo BUILD FINISHED
+fi
 
 echo === RUNNING PARATEST ===
-mpirun -n 4 -ppn 1 ./paratest
+### Intel MPI
+#mpirun -n 1 -ppn 1 ./paratest
+
+### OpenMPI
+mpirun  --map-by ppr:1:node         \
+        --mca mpi_leave_pinned 1    \
+        --mca osc pt2pt             \
+        -n 4 ./paratest
 echo === PARATEST FINISHED ===

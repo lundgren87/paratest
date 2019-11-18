@@ -18,17 +18,17 @@ std::atomic<double> *progvec;
 
 struct thread_args {
     int tid;
-    int stride;
     int arraysize;
     int mystart;
     int myend;
+    int iterations;
     double alpha;
 };
 
 /* Perform update on partial array */
 void *work(void *argptr){
     thread_args * args = static_cast<thread_args*>(argptr);
-    int i, j, tid, mystart, myend, nodeid;
+    int i, j, tid, mystart, myend, nodeid, iterations;
     double alpha, temp;
 
     // Store some things locally
@@ -36,11 +36,14 @@ void *work(void *argptr){
     mystart = args->mystart;
     myend = args->myend;
     alpha = args->alpha;
+    iterations = args->iterations;
     nodeid = argo::node_id();
 
     // Do work on assigned array section
     for(i=mystart; i<myend; i++){
-        out_array[i] = in_array[i]*alpha;
+        for(j=0; j<100; j++){
+            out_array[i] += in_array[i]*alpha;
+        }
         // Update progress occasionally
         if(i%500){
             temp = (double)(i-mystart)/(double)(myend-mystart);
@@ -91,10 +94,11 @@ void *ptr(void *argptr){
         }
         pthread_yield();
     }
+    printf("[%d] COMPLETED.\n", nodeid);
 }
 
 int main(int argc, char** argv){
-    int i, nodeid, nnodes, nthreads, arraysize, chunksize, nodesize;
+    int i, nodeid, nnodes, nthreads, arraysize, chunksize, nodesize, iterations;
     struct timespec t_start, t_stop;
     double initvalue, alpha;
 
@@ -102,18 +106,21 @@ int main(int argc, char** argv){
 
     printf("Setting up ArgoDSM.\n");
     // On all nodes, init and allocate some data
-    argo::init(512*1024*1024UL, 512*1024*1024UL);
+    argo::init(1024*1024*1024UL, 1024*1024*1024UL);
 
     // Store some things locally
     nodeid = argo::node_id();
     nnodes = argo::number_of_nodes();
     nthreads = 8;
     gnthreads = nthreads;
-    arraysize = 131072*nthreads*nnodes;
+    arraysize = 67108864;   //1GB
+    //arraysize = 8388608;  //128MB
+    //arraysize = 1048576;  //32MB
     nodesize = arraysize/nnodes;
     chunksize = arraysize/(nthreads*nnodes);
     initvalue = 21.0;
     alpha = 2.0;
+    iterations = 100;
 
     // Allocate ArgoDSM memory for arrays
     in_array = argo::conew_array<double>(arraysize);
@@ -151,6 +158,7 @@ int main(int argc, char** argv){
         args[i].tid = nodeid*nthreads + i;
         args[i].mystart = chunksize*(nodeid*nthreads+i);
         args[i].myend = args[i].mystart+chunksize;
+        args[i].iterations = iterations;
         args[i].arraysize = arraysize;
         args[i].alpha = alpha;
         pthread_create(&threads[i], nullptr, work, &args[i]);
@@ -169,15 +177,12 @@ int main(int argc, char** argv){
         printf("Checking results...\n");
         clock_gettime(CLOCK_MONOTONIC, &t_stop);
         for(i=0; i<arraysize; i++){
-            if(out_array[i]!=initvalue*alpha){
-                printf("ERROR: out_array[%d]=%.02f (should be %.02f).\n",
-                        i, out_array[i], initvalue*alpha);
-                abort();
-            }
+            assert(out_array[i]==(initvalue*alpha)*100);
         }
+        printf("Done checking.\n");
         double time = (t_stop.tv_sec - t_start.tv_sec)*1e3 +
             (t_stop.tv_nsec - t_start.tv_nsec)*1e-6;
-        double numops = (double)arraysize * 2.0;
+        double numops = (double)arraysize * (double)iterations * 2.0;
         double mflops = (numops/(time*10e-3))*10e-6;
         printf("Paratest-nocontention SUCCESSFUL.\n"
                 "Time: %.02fms MFLOPS: %.02f\n", time, mflops);
