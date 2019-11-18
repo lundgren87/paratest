@@ -41,7 +41,7 @@ void *work(void *argptr){
 
     // Do work on assigned array section
     for(i=mystart; i<myend; i++){
-        for(j=0; j<100; j++){
+        for(j=0; j<iterations; j++){
             out_array[i] += in_array[i]*alpha;
         }
         // Update progress occasionally
@@ -120,7 +120,7 @@ int main(int argc, char** argv){
     chunksize = arraysize/(nthreads*nnodes);
     initvalue = 21.0;
     alpha = 2.0;
-    iterations = 100;
+    iterations = 500;
 
     // Allocate ArgoDSM memory for arrays
     in_array = argo::conew_array<double>(arraysize);
@@ -177,7 +177,7 @@ int main(int argc, char** argv){
         printf("Checking results...\n");
         clock_gettime(CLOCK_MONOTONIC, &t_stop);
         for(i=0; i<arraysize; i++){
-            assert(out_array[i]==(initvalue*alpha)*100);
+            assert(out_array[i]==(initvalue*alpha)*iterations);
         }
         printf("Done checking.\n");
         double time = (t_stop.tv_sec - t_start.tv_sec)*1e3 +
