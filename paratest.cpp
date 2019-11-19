@@ -7,6 +7,7 @@
 #include <vector>
 #include <ctime>
 #include <atomic>
+#include <getopt.h>
 
 #include "argo/argo.hpp"
 
@@ -81,7 +82,7 @@ void *ptr(void *argptr){
         // Else, check if progress should be printed
         clock_gettime(CLOCK_MONOTONIC, &t_cur);
         t = t_cur.tv_sec-t_start.tv_sec;
-        if(((t % numnodes) == nodeid) && (t != lastprint)){
+        if(((t % (numnodes+1)) == (nodeid+1)) && (t != lastprint)){
             lastprint = t;
             // Print progress for each thread on this node
             printf("[%d] [", nodeid);
@@ -98,33 +99,88 @@ void *ptr(void *argptr){
 }
 
 int main(int argc, char** argv){
-    int i, nodeid, nnodes, nthreads, arraysize, chunksize, nodesize, iterations;
-    struct timespec t_start, t_stop;
+    int i, opt, argosize, nodeid, nnodes, nthreads;
+    int arraysize, chunksize, nodesize, iterations;
+    unsigned int hwthreads;
+    struct timespec t_start, t_stop, t_init;
     double initvalue, alpha;
 
-    // TODO: maybe allow user input?
-
-    printf("Setting up ArgoDSM.\n");
-    // On all nodes, init and allocate some data
-    argo::init(1024*1024*1024UL, 1024*1024*1024UL);
-
-    // Store some things locally
-    nodeid = argo::node_id();
-    nnodes = argo::number_of_nodes();
-    nthreads = 8;
-    gnthreads = nthreads;
+    // Set some basic values
+    hwthreads = std::thread::hardware_concurrency();
+    nthreads = hwthreads/2;
     arraysize = 67108864;   //1GB
     //arraysize = 8388608;  //128MB
     //arraysize = 1048576;  //32MB
-    nodesize = arraysize/nnodes;
-    chunksize = arraysize/(nthreads*nnodes);
     initvalue = 21.0;
     alpha = 2.0;
     iterations = 500;
+    
+    // Parse command line parameters
+    while ((opt = getopt(argc, argv, "s:i:a:n:m:h")) != -1) {
+        switch (opt) {
+            case 's':
+                arraysize = atoi(optarg);
+                if(arraysize > 0 && ((arraysize & (arraysize - 1)) == 0)){
+                    break;
+                }else{
+                    fprintf(stderr, "[-s arraysize] must be >0 and power of 2.\n");
+                    exit(EXIT_FAILURE);
+                }
+            case 'i':
+                iterations = atoi(optarg);
+                if(iterations > 0){
+                    break;
+                }else{
+                    fprintf(stderr, "-i iterations] must be >0.\n");
+                    exit(EXIT_FAILURE);
+                }
+            case 'a':
+                alpha = atof(optarg);
+                break;
+            case 'n':
+                nthreads = atoi(optarg);
+                if(nthreads > hwthreads){
+                    fprintf(stderr, "Warning, %u cores available but %d threads requested. "
+                            "Performance may suffer as a result.\n", hwthreads, nthreads);
+                }
+                if(nthreads > 0 && (arraysize%nthreads) == 0){
+                    break;
+                }else{
+                    fprintf(stderr, "[-n threads must be >0 and divide arraysize (%d).\n",
+                            arraysize);
+                    exit(EXIT_FAILURE);
+                }
+            case 'h':
+                fprintf(stderr, "Usage: mpirun [-np nodes] %s [-s arraysize] [-i iterations]" 
+                        "[-a alpha] [-n threads] [-h help]\n", argv[0]);
+                exit(EXIT_FAILURE);
+            default:
+                fprintf(stderr, "Usage: mpirun [-np nodes] %s [-s arraysize] [-i iterations]" 
+                        "[-a alpha] [-n threads] [-h help]\n", argv[0]);
+                exit(EXIT_FAILURE);
+        }
+    }
 
+    // On all nodes, init and allocate some data
+    argosize = arraysize*sizeof(double)*2;
+    argo::init(argosize, argosize);
+
+    // Store some things locally
+    gnthreads = nthreads;
+    nodeid = argo::node_id();
+    nnodes = argo::number_of_nodes();
+    nodesize = arraysize/nnodes;
+    chunksize = arraysize/(nthreads*nnodes);
+    
+    printf("[%d] ArgoDSM allocating memory.\n", nodeid);
     // Allocate ArgoDSM memory for arrays
-    in_array = argo::conew_array<double>(arraysize);
-    out_array = argo::conew_array<double>(arraysize);
+    if(arraysize % (nnodes*nthreads) != 0){
+        fprintf(stderr, "Error: nnodes*nthreads must divide arraysize.\n");
+        exit(EXIT_FAILURE);
+    }else{
+        in_array = argo::conew_array<double>(arraysize);
+        out_array = argo::conew_array<double>(arraysize);
+    }
 
     // Set up thread data
     std::vector<pthread_t> threads(nthreads);
@@ -136,8 +192,18 @@ int main(int argc, char** argv){
     }
 
     // Initialize ArgoDSM data
+    argo::barrier();
     if(argo::node_id() == 0){
-        printf("Initializing data.\n");
+        clock_gettime(CLOCK_MONOTONIC, &t_init);
+        printf("\nStarting paratest with parameters:\n"
+                "\tArgoDSM nodes:\t\t%4d"
+                "\tArraysize:\t%12d\n"
+                "\tThreads per node:\t%4d"
+                "\tIterations:\t%12d\n"
+                "\tHWthreads per node:\t%4d"
+                "\tDaxpy alpha:\t%12f\n",
+                nnodes, arraysize, nthreads, iterations, hwthreads, alpha);
+        printf("\nInitializing data...\n");
     }
     for(i=nodeid*nodesize; i < (nodeid+1)*nodesize; i++){
         in_array[i]=initvalue;
@@ -147,9 +213,8 @@ int main(int argc, char** argv){
     // Distribute initialization and wait for other nodes
     argo::barrier();
     if(nodeid == 0){
-        printf("Starting paratest with %d ArgoDSM nodes.\n", nnodes);
         // Start timekeeping on node 0
-        printf("Running Paratest-nocontention.\n");
+        printf("\nRunning Paratest-nocontention...\n");
         clock_gettime(CLOCK_MONOTONIC, &t_start);
     }	
 
@@ -174,18 +239,22 @@ int main(int argc, char** argv){
 
     // Check results	
     if(nodeid == 0){
-        printf("Checking results...\n");
+        printf("\nExecution completed. Checking results...\n");
         clock_gettime(CLOCK_MONOTONIC, &t_stop);
         for(i=0; i<arraysize; i++){
             assert(out_array[i]==(initvalue*alpha)*iterations);
         }
-        printf("Done checking.\n");
-        double time = (t_stop.tv_sec - t_start.tv_sec)*1e3 +
+        double inittime = (t_start.tv_sec - t_init.tv_sec)*1e3 +
+            (t_start.tv_nsec - t_init.tv_nsec)*1e-6;
+        double exectime = (t_stop.tv_sec - t_start.tv_sec)*1e3 +
             (t_stop.tv_nsec - t_start.tv_nsec)*1e-6;
         double numops = (double)arraysize * (double)iterations * 2.0;
-        double mflops = (numops/(time*10e-3))*10e-6;
-        printf("Paratest-nocontention SUCCESSFUL.\n"
-                "Time: %.02fms MFLOPS: %.02f\n", time, mflops);
+        double mflops = (numops/(exectime*10e-3))*10e-6;
+        printf("\nParatest-nocontention SUCCESSFUL.\n"
+                "\tInit time:\t%10.02fms"
+                "\tOperations:\t%12lu\n"
+                "\tExec time:\t%10.02fms"
+                "\tMFLOPS:\t\t%12.02f\n\n", inittime, (unsigned long)numops, exectime, mflops);
     }
 
     // Delete necessary things and finalize ArgoDSM
