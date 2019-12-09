@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <iostream>
 #include <pthread.h>
+#include <unistd.h>
 #include <cassert>
 #include <vector>
 #include <ctime>
@@ -19,10 +20,10 @@ std::atomic<double> *progvec;
 
 struct thread_args {
     int tid;
-    int arraysize;
+    unsigned long arraysize;
     int mystart;
     int myend;
-    int iterations;
+    unsigned long iterations;
     double alpha;
 };
 
@@ -96,11 +97,12 @@ void *ptr(void *argptr){
         pthread_yield();
     }
     printf("[%d] COMPLETED.\n", nodeid);
+    return nullptr;
 }
 
 int main(int argc, char** argv){
-    int i, opt, argosize, nodeid, nnodes, nthreads;
-    int arraysize, chunksize, nodesize, iterations;
+    int i, opt, nodeid, nnodes, nthreads;
+    unsigned long arraysize, chunksize, nodesize, iterations, argosize;
     unsigned int hwthreads;
     struct timespec t_start, t_stop, t_init;
     double initvalue, alpha;
@@ -109,8 +111,6 @@ int main(int argc, char** argv){
     hwthreads = std::thread::hardware_concurrency();
     nthreads = hwthreads/2;
     arraysize = 67108864;   //1GB
-    //arraysize = 8388608;  //128MB
-    //arraysize = 1048576;  //32MB
     initvalue = 21.0;
     alpha = 2.0;
     iterations = 500;
@@ -119,7 +119,7 @@ int main(int argc, char** argv){
     while ((opt = getopt(argc, argv, "s:i:a:n:m:h")) != -1) {
         switch (opt) {
             case 's':
-                arraysize = atoi(optarg);
+                arraysize = atol(optarg);
                 if(arraysize > 0 && ((arraysize & (arraysize - 1)) == 0)){
                     break;
                 }else{
@@ -127,7 +127,7 @@ int main(int argc, char** argv){
                     exit(EXIT_FAILURE);
                 }
             case 'i':
-                iterations = atoi(optarg);
+                iterations = atol(optarg);
                 if(iterations > 0){
                     break;
                 }else{
@@ -146,7 +146,7 @@ int main(int argc, char** argv){
                 if(nthreads > 0 && (arraysize%nthreads) == 0){
                     break;
                 }else{
-                    fprintf(stderr, "[-n threads must be >0 and divide arraysize (%d).\n",
+                    fprintf(stderr, "[-n threads must be >0 and divide arraysize (%lu).\n",
                             arraysize);
                     exit(EXIT_FAILURE);
                 }
@@ -161,23 +161,23 @@ int main(int argc, char** argv){
         }
     }
 
-    // On all nodes, init and allocate some data
+    // On all nodes, init ArgoDSM and store some things locally
     argosize = arraysize*sizeof(double)*2;
     argo::init(argosize, argosize);
 
-    // Store some things locally
     gnthreads = nthreads;
     nodeid = argo::node_id();
     nnodes = argo::number_of_nodes();
     nodesize = arraysize/nnodes;
     chunksize = arraysize/(nthreads*nnodes);
-    
-    printf("[%d] ArgoDSM allocating memory.\n", nodeid);
+    printf("[%d] ArgoDSM initialized.\n", nodeid);
+
     // Allocate ArgoDSM memory for arrays
     if(arraysize % (nnodes*nthreads) != 0){
         fprintf(stderr, "Error: nnodes*nthreads must divide arraysize.\n");
         exit(EXIT_FAILURE);
     }else{
+        printf("[%d] ArgoDSM allocating memory.\n", nodeid);
         in_array = argo::conew_array<double>(arraysize);
         out_array = argo::conew_array<double>(arraysize);
     }
@@ -197,18 +197,24 @@ int main(int argc, char** argv){
         clock_gettime(CLOCK_MONOTONIC, &t_init);
         printf("\nStarting paratest with parameters:\n"
                 "\tArgoDSM nodes:\t\t%4d"
-                "\tArraysize:\t%12d\n"
+                "\tArraysize:\t%12lu\n"
                 "\tThreads per node:\t%4d"
-                "\tIterations:\t%12d\n"
+                "\tIterations:\t%12lu\n"
                 "\tHWthreads per node:\t%4d"
                 "\tDaxpy alpha:\t%12f\n",
                 nnodes, arraysize, nthreads, iterations, hwthreads, alpha);
         printf("\nInitializing data...\n");
     }
     for(i=nodeid*nodesize; i < (nodeid+1)*nodesize; i++){
+        if(i%(arraysize/16)==0){
+            printf("[%d] Initialized %.02f%% of my assignment...\n", 
+                    nodeid, 
+                    ((double)(i-(nodeid*nodesize))/(double)(nodesize))*100);
+        }
         in_array[i]=initvalue;
         out_array[i]=0;
     }
+    printf("[%d] Done initializing.\n", nodeid);
 
     // Distribute initialization and wait for other nodes
     argo::barrier();
@@ -242,7 +248,12 @@ int main(int argc, char** argv){
         printf("\nExecution completed. Checking results...\n");
         clock_gettime(CLOCK_MONOTONIC, &t_stop);
         for(i=0; i<arraysize; i++){
-            assert(out_array[i]==(initvalue*alpha)*iterations);
+            if(out_array[i]!=(initvalue*alpha)*iterations){
+                printf("ERROR: out_array[%d]==%.2f (should be %.2f).\n",
+                        i, out_array[i], (initvalue*alpha)*iterations);
+                exit(EXIT_FAILURE);
+            }
+
         }
         double inittime = (t_start.tv_sec - t_init.tv_sec)*1e3 +
             (t_start.tv_nsec - t_init.tv_nsec)*1e-6;
@@ -262,4 +273,5 @@ int main(int argc, char** argv){
     argo::codelete_array(in_array);
     argo::codelete_array(out_array);
     argo::finalize();
+    delete progvec;
 }
