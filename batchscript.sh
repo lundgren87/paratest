@@ -14,10 +14,10 @@ cd ${HOME}/git/paratest/
 echo ENVIRONMENT SET UP
 
 if [ "$1" = "make" ] ; then
-    echo BUILDING EXAMPLE
-    make clean
-    make
-    echo BUILD FINISHED
+	echo BUILDING EXAMPLE
+	make clean
+	make
+	echo BUILD FINISHED
 fi
 
 echo === RUNNING PARATEST ===
@@ -34,24 +34,24 @@ mpirun -np ${NNODES} -ppn 1 ./paratest -s ${ARRAYSIZE} -i ${ITERATIONS} -n 8
 
 
 #        --mca btl openib,self,sm    \
-#        --mca osc pt2pt             \
-#        --mca osc ucx               \
-#        --mca pml ob1               \
-### OpenMPI
+	#        --mca osc pt2pt             \
+	#        --mca osc ucx               \
+	#        --mca pml ob1               \
+	### OpenMPI
 #mpirun  --map-by ppr:1:node         \
-#        --mca mpi_leave_pinned 1    \
-#        --mca osc pt2pt             \
-#        -n ${NNODES} ./paratest -s ${ARRAYSIZE} -i ${ITERATIONS} -n 1
+	#        --mca mpi_leave_pinned 1    \
+	#        --mca osc pt2pt             \
+	#        -n ${NNODES} ./paratest -s ${ARRAYSIZE} -i ${ITERATIONS} -n 1
 #mpirun  --map-by ppr:1:node         \
-#        --mca mpi_leave_pinned 1    \
-#        --mca osc pt2pt             \
-#        -n ${NNODES} ./paratest -s ${ARRAYSIZE} -i ${ITERATIONS} -n 2
+	#        --mca mpi_leave_pinned 1    \
+	#        --mca osc pt2pt             \
+	#        -n ${NNODES} ./paratest -s ${ARRAYSIZE} -i ${ITERATIONS} -n 2
 #mpirun  --map-by ppr:1:node         \
-#        --mca mpi_leave_pinned 1    \
-#        --mca osc pt2pt             \
-#        -n ${NNODES} ./paratest -s ${ARRAYSIZE} -i ${ITERATIONS} -n 4
+	#        --mca mpi_leave_pinned 1    \
+	#        --mca osc pt2pt             \
+	#        -n ${NNODES} ./paratest -s ${ARRAYSIZE} -i ${ITERATIONS} -n 4
 #mpirun  --map-by ppr:1:node         \
-#        --mca mpi_leave_pinned 1    \
-#        --mca osc pt2pt             \
-#        -n ${NNODES} ./paratest -s ${ARRAYSIZE} -i ${ITERATIONS} -n 8
+	#        --mca mpi_leave_pinned 1    \
+	#        --mca osc pt2pt             \
+	#        -n ${NNODES} ./paratest -s ${ARRAYSIZE} -i ${ITERATIONS} -n 8
 echo === PARATEST FINISHED ===

@@ -8,6 +8,6 @@ all: paratest
 
 paratest: paratest.cpp
 	${CXX} ${CXXFLAGS} -o $@ $< $(LDFLAGS)
-	
+
 clean:
 	${RM} paratest
